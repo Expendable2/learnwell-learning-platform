@@ -12,7 +12,12 @@ async function apiRequest(url, options = {}) {
     },
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Something went wrong. Please try again.");
+  if (!response.ok) {
+    const error = new Error(data.error || "Something went wrong. Please try again.");
+    error.score = data.score;
+    error.total = data.total;
+    throw error;
+  }
   return data;
 }
 
@@ -58,6 +63,8 @@ function AuthModal({ course, enrollment: initialEnrollment, mode = "register", i
   const [enrollment, setEnrollment] = useState(initialEnrollment);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [quizAnswers, setQuizAnswers] = useState([]);
+  const [quizFeedback, setQuizFeedback] = useState("");
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -95,31 +102,40 @@ function AuthModal({ course, enrollment: initialEnrollment, mode = "register", i
   }
 
   async function completeLesson() {
+    if (quizQuestions.some((_, index) => !Number.isInteger(quizAnswers[index]))) {
+      setQuizFeedback("Choose one answer for every question before submitting.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const { enrollment: nextEnrollment } = await apiRequest(`/api/enrollments/${course.id}/progress`, {
         method: "PATCH",
-        body: JSON.stringify({ completedLessons: enrollment.completedLessons + 1 }),
+        body: JSON.stringify({ completedLessons: enrollment.completedLessons + 1, quizAnswers }),
       });
       setEnrollment(nextEnrollment);
       onEnrollmentUpdated(nextEnrollment);
+      setQuizAnswers([]);
+      setQuizFeedback("");
       if (nextEnrollment.certificate) setFlow("certificate");
     } catch (requestError) {
-      setError(requestError.message);
+      setQuizFeedback(requestError.score !== undefined
+        ? `You got ${requestError.score} of ${requestError.total} correct. Review the lesson and try again.`
+        : requestError.message);
     } finally {
       setBusy(false);
     }
   }
 
   const currentLesson = course?.lessons?.[enrollment?.completedLessons];
+  const quizQuestions = currentLesson?.quiz?.questions || [];
   const certificate = enrollment?.certificate;
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <section className={`auth-modal${flow === "lesson" ? " learning-modal" : ""}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <button className="icon-button modal-close" type="button" onClick={onClose} aria-label="Close dialog">
           <Icon name="close" />
         </button>
@@ -136,24 +152,65 @@ function AuthModal({ course, enrollment: initialEnrollment, mode = "register", i
             <h2 id="modal-title">{course.title}</h2>
             <p className="modal-copy">A self-paced course with {course.instructor}.</p>
             <div className="lesson-progress">
-              <span>LESSON {enrollment.completedLessons + 1} OF {enrollment.totalLessons}</span>
+              <span>LESSON {enrollment.completedLessons + 1} OF {enrollment.totalLessons} · VIDEO + QUIZ</span>
               <div><i style={{ width: `${(enrollment.completedLessons / enrollment.totalLessons) * 100}%` }} /></div>
             </div>
             <div className="lesson-card">
               <span className="lesson-number">{String(enrollment.completedLessons + 1).padStart(2, "0")}</span>
               <h3>{currentLesson?.title}</h3>
               <p>{currentLesson?.content}</p>
-              <div className="lesson-takeaway"><strong>Try this</strong><span>Write down one idea you can put into practice this week.</span></div>
             </div>
-            <button
-              className="button button-primary modal-submit"
-              type="button"
-              onClick={completeLesson}
-              disabled={busy}
-            >
-              {busy ? "Saving progress…" : enrollment.completedLessons + 1 === enrollment.totalLessons ? "Complete course & earn certificate" : "Mark lesson complete"}
-              <Icon name="arrow" size={18} />
-            </button>
+            {currentLesson?.videoUrl ? (
+              <div className="lesson-video">
+                <iframe
+                  src={currentLesson.videoUrl}
+                  title={`${currentLesson.title} video tutorial`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
+              </div>
+            ) : <p className="video-unavailable">A video tutorial has not been added to this lesson yet.</p>}
+            <form className="lesson-quiz" onSubmit={(event) => { event.preventDefault(); completeLesson(); }}>
+              <div className="quiz-heading">
+                <span className="eyebrow">KNOWLEDGE CHECK</span>
+                <h3>Quick quiz</h3>
+                <p>Answer every question correctly to complete this lesson.</p>
+              </div>
+              {quizQuestions.map((question, questionIndex) => (
+                <fieldset className="quiz-question" key={`${currentLesson.title}-${questionIndex}`}>
+                  <legend>{questionIndex + 1}. {question.question}</legend>
+                  {question.options.map((option, optionIndex) => (
+                    <label className="quiz-option" key={option}>
+                      <input
+                        type="radio"
+                        name={`lesson-quiz-${questionIndex}`}
+                        value={optionIndex}
+                        checked={quizAnswers[questionIndex] === optionIndex}
+                        onChange={() => {
+                          setQuizAnswers((current) => {
+                            const next = [...current];
+                            next[questionIndex] = optionIndex;
+                            return next;
+                          });
+                          setQuizFeedback("");
+                        }}
+                      />
+                      <span>{option}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
+              {quizFeedback && <p className="quiz-feedback" role="alert">{quizFeedback}</p>}
+              <button
+                className="button button-primary modal-submit"
+                type="submit"
+                disabled={busy || quizQuestions.some((_, index) => !Number.isInteger(quizAnswers[index]))}
+              >
+                {busy ? "Checking your answers…" : enrollment.completedLessons + 1 === enrollment.totalLessons ? "Pass quiz & earn certificate" : "Check answers & continue"}
+                {!busy && <Icon name="arrow" size={18} />}
+              </button>
+            </form>
           </div>
         ) : flow === "certificate" ? (
           <div className="certificate-flow">
@@ -258,6 +315,8 @@ function CreateCourseModal({ user, onClose, onCreated }) {
     const lessons = String(formData.get("lessons") || "").split("\n").map((title) => title.trim()).filter(Boolean);
     const body = Object.fromEntries(formData.entries());
     body.lessons = lessons;
+    body.lessonVideoUrls = String(formData.get("lesson-video-urls") || "").split("\n").map((url) => url.trim()).filter(Boolean);
+    body.lessonQuizLines = String(formData.get("lesson-quiz-lines") || "").split("\n").map((line) => line.trim()).filter(Boolean);
     try {
       const { course } = await apiRequest("/api/courses", { method: "POST", body: JSON.stringify(body) });
       onCreated(course);
@@ -292,10 +351,14 @@ function CreateCourseModal({ user, onClose, onCreated }) {
           </div>
           <label htmlFor="course-lessons">Lesson titles <span>(one per line, up to 20)</span></label>
           <textarea id="course-lessons" name="lessons" rows="4" placeholder={"Welcome and course overview\nYour first core skill\nPut it into practice"} required />
+          <label htmlFor="course-lesson-video-urls">YouTube video URLs <span>(one per lesson, in the same order)</span></label>
+          <textarea id="course-lesson-video-urls" name="lesson-video-urls" rows="3" placeholder={"https://www.youtube.com/watch?v=hJHvdBlSxug\nhttps://youtu.be/yU7jJ3NbPdA\nhttps://www.youtube.com/watch?v=GxmfcnU3feo"} required />
+          <label htmlFor="course-lesson-quiz-lines">Quiz questions <span>(one per lesson; question | choice 1 | choice 2 | choice 3 | choice 4 | correct choice number)</span></label>
+          <textarea id="course-lesson-quiz-lines" name="lesson-quiz-lines" rows="4" placeholder={"What does HTML structure? | Web content | Database backups | Network cables | Images only | 1\nWhich CSS feature adapts layouts? | Media queries | SQL | Cookies | DNS | 1\nWhat should you test before publishing? | Key pages and interactions | Nothing | Only the logo | File names | 1"} required />
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="button button-primary modal-submit" type="submit" disabled={busy}>{busy ? "Publishing…" : "Publish course"} {!busy && <Icon name="arrow" size={18} />}</button>
         </form>
-        <p className="modal-terms">Courses are free in this MVP. Certificates are issued after all lessons are completed.</p>
+        <p className="modal-terms">Courses are free in this MVP. Learners must pass every lesson quiz to earn a certificate.</p>
       </section>
     </div>
   );
@@ -307,6 +370,7 @@ function CourseCard({ course, onEnroll }) {
       <div className={`course-image ${course.accent}`}>
         <img src={course.image} alt="" loading="lazy" />
         <span className="course-level">{course.level}</span>
+        <span className="course-format">Video lessons · quizzes</span>
         <button
           className="play-button"
           type="button"

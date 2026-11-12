@@ -46,6 +46,14 @@ function sendError(res, status, message) {
   return res.status(status).json({ error: message });
 }
 
+function publicEnrollment(enrollment) {
+  return { ...enrollment, course: publicCourse(enrollment.course) };
+}
+
+function publicEnrollmentResult(result) {
+  return result.enrollment ? { ...result, enrollment: publicEnrollment(result.enrollment) } : result;
+}
+
 async function requireUser(req, res, next) {
   const token = sessionToken(req);
   if (!token) return sendError(res, 401, "Please sign in to continue.");
@@ -114,7 +122,7 @@ app.get("/api/me", async (req, res) => {
   const user = token ? await getAuthenticatedUser(digest(token)) : null;
   if (!user) return res.json({ user: null, enrollments: [] });
   const profile = await getUserProfile(user.id);
-  res.json({ user: safeUser(user), enrollments: profile.enrollments });
+  res.json({ user: safeUser(user), enrollments: profile.enrollments.map(publicEnrollment) });
 });
 
 app.post("/api/courses", requireUser, async (req, res) => {
@@ -128,6 +136,12 @@ app.post("/api/courses", requireUser, async (req, res) => {
   const lessonTitles = Array.isArray(body.lessons)
     ? body.lessons.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean)
     : [];
+  const lessonVideoUrls = Array.isArray(body.lessonVideoUrls)
+    ? body.lessonVideoUrls.filter((item) => typeof item === "string").map((item) => item.trim())
+    : [];
+  const lessonQuizLines = Array.isArray(body.lessonQuizLines)
+    ? body.lessonQuizLines.filter((item) => typeof item === "string").map((item) => item.trim())
+    : [];
 
   if (title.length < 4 || title.length > 100) return sendError(res, 400, "Course title must be between 4 and 100 characters.");
   if (description.length < 20 || description.length > 600) return sendError(res, 400, "Description must be between 20 and 600 characters.");
@@ -137,6 +151,42 @@ app.post("/api/courses", requireUser, async (req, res) => {
   if (organization.length > 80) return sendError(res, 400, "Organization must be 80 characters or fewer.");
   if (lessonTitles.length < 1 || lessonTitles.length > 20 || lessonTitles.some((item) => item.length > 100)) {
     return sendError(res, 400, "Add between 1 and 20 lesson titles, each no longer than 100 characters.");
+  }
+  if (lessonVideoUrls.length !== lessonTitles.length || lessonQuizLines.length !== lessonTitles.length) {
+    return sendError(res, 400, "Add one video URL and one quiz question for every lesson.");
+  }
+
+  const videoUrls = lessonVideoUrls.map((videoUrl) => {
+    try {
+      const parsed = new URL(videoUrl);
+      let videoId = "";
+      if (["youtube.com", "www.youtube.com", "m.youtube.com"].includes(parsed.hostname)) {
+        videoId = parsed.pathname === "/watch" ? parsed.searchParams.get("v") || "" : parsed.pathname.split("/").filter(Boolean).at(-1) || "";
+      } else if (["youtu.be", "www.youtu.be"].includes(parsed.hostname)) {
+        videoId = parsed.pathname.split("/").filter(Boolean)[0] || "";
+      }
+      return /^[A-Za-z0-9_-]{11}$/.test(videoId) ? `https://www.youtube-nocookie.com/embed/${videoId}` : null;
+    } catch {
+      return null;
+    }
+  });
+  if (videoUrls.some((videoUrl) => !videoUrl)) {
+    return sendError(res, 400, "Use a valid YouTube video URL for each lesson.");
+  }
+
+  const lessonQuizzes = lessonQuizLines.map((line) => {
+    const [question, ...parts] = line.split("|").map((part) => part.trim());
+    const options = parts.slice(0, 4);
+    const correctAnswer = Number(parts[4]);
+    if (
+      !question || question.length > 300 || parts.length !== 5 ||
+      options.some((option) => !option || option.length > 160) ||
+      !Number.isInteger(correctAnswer) || correctAnswer < 1 || correctAnswer > 4
+    ) return null;
+    return { questions: [{ question, options, correctIndex: correctAnswer - 1 }] };
+  });
+  if (lessonQuizzes.some((quiz) => !quiz)) {
+    return sendError(res, 400, "Each quiz line needs a question, four answers, and the correct answer number (1-4), separated by |.");
   }
 
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
@@ -158,6 +208,8 @@ app.post("/api/courses", requireUser, async (req, res) => {
     lessons: lessonTitles.map((lessonTitle, index) => ({
       title: lessonTitle,
       content: `Start with one clear goal for this lesson. Explore ${lessonTitle.toLowerCase()}, capture your key takeaway, and decide how you can put it into practice.`,
+      videoUrl: videoUrls[index],
+      quiz: lessonQuizzes[index],
       index,
     })),
     createdBy: req.user.id,
@@ -170,7 +222,7 @@ app.post("/api/courses", requireUser, async (req, res) => {
 app.put("/api/enrollments/:courseId", requireUser, async (req, res) => {
   const result = await enrollUser(req.user.id, req.params.courseId);
   if (result.error) return sendError(res, result.status, result.error);
-  res.json(result);
+  res.json(publicEnrollmentResult(result));
 });
 
 app.patch("/api/enrollments/:courseId/progress", requireUser, async (req, res) => {
@@ -179,10 +231,14 @@ app.patch("/api/enrollments/:courseId/progress", requireUser, async (req, res) =
   if (!Number.isInteger(completedLessons) || completedLessons < 0) {
     return sendError(res, 400, "Lesson progress must be a non-negative whole number.");
   }
+  const quizAnswers = body.quizAnswers;
+  if (quizAnswers !== undefined && (!Array.isArray(quizAnswers) || quizAnswers.some((answer) => !Number.isInteger(answer) || answer < 0 || answer > 3))) {
+    return sendError(res, 400, "Quiz answers must be valid answer choices.");
+  }
 
-  const result = await completeCourseProgress(req.user, req.params.courseId, completedLessons);
-  if (result.error) return sendError(res, result.status, result.error);
-  res.json(result);
+  const result = await completeCourseProgress(req.user, req.params.courseId, completedLessons, quizAnswers);
+  if (result.error) return res.status(result.status).json({ error: result.error, score: result.score, total: result.total, passed: false });
+  res.json(publicEnrollmentResult(result));
 });
 
 app.get("/api/certificates/:certificateId", async (req, res) => {

@@ -32,7 +32,12 @@ async function loadLocalStore() {
     return {
       users: Array.isArray(saved.users) ? saved.users : [],
       sessions: Array.isArray(saved.sessions) ? saved.sessions : [],
-      courses: Array.isArray(saved.courses) && saved.courses.length ? saved.courses : seedCourses,
+      courses: Array.isArray(saved.courses) && saved.courses.length
+        ? saved.courses.map((course) => {
+          const seededCourse = seedCourses.find((seed) => seed.id === course.id);
+          return seededCourse ? { ...course, lessons: seededCourse.lessons } : course;
+        })
+        : seedCourses,
       enrollments: Array.isArray(saved.enrollments) ? saved.enrollments : [],
       certificates: Array.isArray(saved.certificates) ? saved.certificates : [],
     };
@@ -190,7 +195,7 @@ export async function initializeStore() {
         `INSERT INTO courses
           (id, title, instructor, organization, category, level, duration, rating, reviews, price, image, accent, description, lessons)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO UPDATE SET lessons = EXCLUDED.lessons`,
         [
           course.id, course.title, course.instructor, course.organization, course.category,
           course.level, course.duration, course.rating, course.reviews, course.price,
@@ -427,7 +432,20 @@ async function getEnrollment(userId, courseId, enrollmentRow, client = pool) {
   };
 }
 
-export async function completeCourseProgress(user, courseId, completedLessons) {
+function checkLessonQuiz(lesson, answers) {
+  const questions = lesson.quiz?.questions || [];
+  if (questions.length === 0) return { passed: true };
+  if (!Array.isArray(answers) || answers.length !== questions.length) {
+    return { passed: false, score: 0, total: questions.length };
+  }
+  const score = questions.reduce(
+    (total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0),
+    0,
+  );
+  return { passed: score === questions.length, score, total: questions.length };
+}
+
+export async function completeCourseProgress(user, courseId, completedLessons, quizAnswers) {
   if (pool) {
     const client = await pool.connect();
     try {
@@ -450,6 +468,13 @@ export async function completeCourseProgress(user, courseId, completedLessons) {
       if (completedLessons > course.lessons.length || completedLessons > enrollment.completed_lessons + 1) {
         await client.query("ROLLBACK");
         return { error: "Complete lessons in order to update your progress.", status: 400 };
+      }
+      if (completedLessons === enrollment.completed_lessons + 1) {
+        const quizResult = checkLessonQuiz(course.lessons[enrollment.completed_lessons], quizAnswers);
+        if (!quizResult.passed) {
+          await client.query("ROLLBACK");
+          return { error: "Answer every quiz question correctly to complete this lesson.", status: 400, ...quizResult };
+        }
       }
 
       const updated = await client.query(
@@ -484,6 +509,12 @@ export async function completeCourseProgress(user, courseId, completedLessons) {
     if (!enrollment) return { error: "Enroll in this course before updating progress.", status: 404 };
     if (completedLessons > course.lessons.length || completedLessons > enrollment.completedLessons + 1) {
       return { error: "Complete lessons in order to update your progress.", status: 400 };
+    }
+    if (completedLessons === enrollment.completedLessons + 1) {
+      const quizResult = checkLessonQuiz(course.lessons[enrollment.completedLessons], quizAnswers);
+      if (!quizResult.passed) {
+        return { error: "Answer every quiz question correctly to complete this lesson.", status: 400, ...quizResult };
+      }
     }
     enrollment.completedLessons = Math.max(enrollment.completedLessons, completedLessons);
     if (enrollment.completedLessons === course.lessons.length && !localCertificateFor(store, user.id, courseId)) {

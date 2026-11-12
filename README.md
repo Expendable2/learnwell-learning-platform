@@ -21,6 +21,10 @@ The local API listens on port 3001 and Vite serves the frontend on port 5173. Lo
 
 The free plans are for testing, not production. The web service spins down after 15 minutes without traffic and can take about a minute to start again. Free PostgreSQL expires 30 days after creation; after a 14-day grace period, Render deletes the database and its data. Free instances can also restart, and the database has no backups. Upgrade to paid plans and arrange backups before relying on Learnwell for real users or long-term data.
 
+## Course lessons
+
+Each featured course includes an embedded video tutorial and a short knowledge-check quiz for every lesson. Learners must answer all quiz questions correctly before progress advances; the API checks answers server-side, and answer keys are never sent to the browser. Instructors add one YouTube URL and one quiz per lesson when creating a course. Quiz entries use this format: `Question | choice 1 | choice 2 | choice 3 | choice 4 | correct choice number`.
+
 Do not commit database URLs, passwords, or other credentials. Add secrets in Render's environment settings. The default Blueprint connects over Render's private network and disallows external database connections; use the external database URL only for a trusted migration or administration client, then remove that access.
 
 ## Production settings
