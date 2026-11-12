@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: learnwell
+    runtime: node
+    region: oregon
+    plan: 1c-2g
+    numInstances: 2
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: PGSSLMODE
+        value: require
+      - key: PG_POOL_MAX
+        value: "10"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: learnwell-db
+          property: connectionString
+
+databases:
+  - name: learnwell-db
+    databaseName: learnwell
+    user: learnwell
+    region: oregon
+    plan: 0.5c-1g
+    postgresMajorVersion: "16"
+    diskSizeGB: 10
+    storageAutoscalingEnabled: true
+    ipAllowList: []

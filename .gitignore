@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/learnwell.json
+data/learnwell.json.tmp
+.env
+.env.*
+!.env.example
