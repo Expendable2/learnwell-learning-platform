@@ -15,9 +15,11 @@ The local API listens on port 3001 and Vite serves the frontend on port 5173. Lo
 
 1. Push this project to a Git provider connected to Render.
 2. In Render, choose **New → Blueprint**, select the repository, and review `render.yaml`.
-3. Apply the Blueprint. It creates a paid Node web service and a managed PostgreSQL database in Oregon. The initial configuration uses two web instances, a 1 GB database compute plan, 10 GB of storage, and storage autoscaling. Adjust plans and instance counts to your traffic and budget before applying.
-4. Wait for the first deploy to pass `/api/health`. Render injects the database's internal connection string; migrations run during pre-deploy and are safe when multiple app instances start.
-5. Add your production domain in Render and verify registration, login, enrollment, and certificate links over HTTPS.
+3. Apply the Blueprint. The current configuration uses one free Node web service and a free 1 GB PostgreSQL database in Oregon. No payment method is required for these plans.
+4. Wait for the first deploy to pass `/api/health`. Render injects the database's internal connection string, and the app applies migrations during startup.
+5. Test registration, login, enrollment, and certificate links over HTTPS.
+
+The free plans are for testing, not production. The web service spins down after 15 minutes without traffic and can take about a minute to start again. Free PostgreSQL expires 30 days after creation; after a 14-day grace period, Render deletes the database and its data. Free instances can also restart, and the database has no backups. Upgrade to paid plans and arrange backups before relying on Learnwell for real users or long-term data.
 
 Do not commit database URLs, passwords, or other credentials. Add secrets in Render's environment settings. The default Blueprint connects over Render's private network and disallows external database connections; use the external database URL only for a trusted migration or administration client, then remove that access.
 

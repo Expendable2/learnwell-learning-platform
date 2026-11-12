@@ -3,10 +3,9 @@ services:
     name: learnwell
     runtime: node
     region: oregon
-    plan: 1c-2g
-    numInstances: 2
+    plan: free
+    numInstances: 1
     buildCommand: npm ci && npm run build
-    preDeployCommand: npm run db:migrate
     startCommand: npm start
     healthCheckPath: /api/health
     maxShutdownDelaySeconds: 30
@@ -29,8 +28,6 @@ databases:
     databaseName: learnwell
     user: learnwell
     region: oregon
-    plan: 0.5c-1g
+    plan: free
     postgresMajorVersion: "16"
-    diskSizeGB: 10
-    storageAutoscalingEnabled: true
     ipAllowList: []
