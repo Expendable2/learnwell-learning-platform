@@ -25,6 +25,12 @@ The free plans are for testing, not production. The web service spins down after
 
 Each featured course includes an embedded video tutorial and a short knowledge-check quiz for every lesson. Learners must answer all quiz questions correctly before progress advances; the API checks answers server-side, and answer keys are never sent to the browser. Instructors add one YouTube URL and one quiz per lesson when creating a course. Quiz entries use this format: `Question | choice 1 | choice 2 | choice 3 | choice 4 | correct choice number`.
 
+## WordPress theme
+
+An installable WordPress theme is available in `wordpress-theme/learnwell` and packaged as `wordpress-theme/learnwell.zip`. It recreates the Learnwell landing page and reads published courses from LearnPress. To use it, install WordPress, install and activate LearnPress, upload the ZIP from **Appearance → Themes → Add New → Upload Theme**, and activate it. Set the site homepage to a static front page to use the landing page. Add courses and lessons in LearnPress; the homepage course list updates from published courses.
+
+LearnPress handles course pages, lessons, quizzes, enrollment, and progress. If learners should register on the site, enable registration in **Settings → General** and keep the default new-user role set to **Subscriber**. This theme does not migrate accounts, courses, or progress from the existing Express application. Add course content in WordPress and verify LearnPress account/profile pages after activation. Certificate functionality is not included in the free-only theme setup and may require a separate LearnPress add-on.
+
 Do not commit database URLs, passwords, or other credentials. Add secrets in Render's environment settings. The default Blueprint connects over Render's private network and disallows external database connections; use the external database URL only for a trusted migration or administration client, then remove that access.
 
 ## Production settings
